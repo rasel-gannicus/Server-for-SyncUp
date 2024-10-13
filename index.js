@@ -29,6 +29,7 @@ async function run() {
     //  --- getting user
     app.get("/api/v1/users", async (req, res) => {
       const email = req.query.email;
+      
       try {
         const user = await userDb.findOne({ email: email });
         if (!user) {
@@ -62,10 +63,7 @@ async function run() {
               },
             }
           );
-          res.status(200).json({
-            message: "User updated successfully",
-            userId: existingUser._id,
-          });
+          res.status(200).json(existingUser);
         } else {
           // Insert new user
           const result = await userDb.insertOne({
@@ -198,9 +196,7 @@ async function run() {
           return res.status(404).json({ message: "Note not found" });
         }
 
-        res.status(200).json({
-          message: "Note marked as deleted successfully",
-        });
+        res.status(200).json(result);
       } catch (error) {
         console.error("Error marking note as deleted in database:", error);
         res
@@ -318,6 +314,8 @@ async function run() {
           .json({ error: "Error marking todo as deleted in database" });
       }
     });
+
+    
   } finally {
     // await client.close();
   }
