@@ -29,7 +29,7 @@ async function run() {
     //  --- getting user
     app.get("/api/v1/users", async (req, res) => {
       const email = req.query.email;
-      
+
       try {
         const user = await userDb.findOne({ email: email });
         if (!user) {
@@ -245,17 +245,25 @@ async function run() {
 
     // --- edit a todo
     app.put("/api/v1/editTodo", async (req, res) => {
-      const { createdAt, text: newText, completed: newCompleted, email } = req.body.todo;
+      const {
+        createdAt,
+        text: newText,
+        completed: newCompleted,
+        email,
+      } = req.body.todo;
 
       if (!email || !createdAt) {
-        return res.status(400).json({ message: "Email and createdAt are required" });
+        return res
+          .status(400)
+          .json({ message: "Email and createdAt are required" });
       }
 
       try {
         // Prepare update object
         const updateObj = { "todos.$.updatedAt": new Date() };
         if (newText) updateObj["todos.$.text"] = newText;
-        if (typeof newCompleted === 'boolean') updateObj["todos.$.completed"] = newCompleted;
+        if (typeof newCompleted === "boolean")
+          updateObj["todos.$.completed"] = newCompleted;
 
         // If no updates are provided, return early
         if (Object.keys(updateObj).length === 1) {
@@ -266,7 +274,9 @@ async function run() {
           { $set: updateObj }
         );
         if (result.modifiedCount === 0) {
-          return res.status(404).json({ message: "Todo not found or already deleted" });
+          return res
+            .status(404)
+            .json({ message: "Todo not found or already deleted" });
         }
 
         res.status(200).json({ message: "Todo updated successfully" });
@@ -290,7 +300,7 @@ async function run() {
         const result = await userDb.updateOne(
           {
             email: email,
-            "todos.createdAt": new Date(createdAt) ,
+            "todos.createdAt": new Date(createdAt),
           },
           {
             $set: {
@@ -315,7 +325,239 @@ async function run() {
       }
     });
 
+
+
+    /* ----------------------------------------------------
+                  --- "Finance Tracker" api ---
+    ---------------------------------------------------- */ 
+
+    app.post("/api/v1/addTransaction", async (req, res) => {
+      const { email, monthName, transaction } = req.body;
     
+      try {    
+        const newTransaction = {
+          _id: new ObjectId(),
+          type: transaction.type,
+          amount: transaction.amount,
+          date: new Date().toISOString()
+        };
+    
+        const updateResult = await userDb.findOneAndUpdate(
+          { email: email, "financeTracker.name": monthName },
+          {
+            $push: { "financeTracker.$.transactions": newTransaction },
+            $inc: {
+              "financeTracker.$.income": transaction.type === 'income' ? transaction.amount : 0,
+              "financeTracker.$.expenses": transaction.type === 'expenses' ? transaction.amount : 0,
+            },
+          },
+          { returnDocument: 'after' }
+        );
+    
+        if (!updateResult.value) {
+          // Month doesn't exist, so we need to add a new month entry
+          const newMonthData = {
+            name: monthName,
+            income: transaction.type === 'income' ? transaction.amount : 0,
+            expenses: transaction.type === 'expenses' ? transaction.amount : 0,
+            savings: transaction.type === 'income' ? transaction.amount : -transaction.amount,
+            transactions: [newTransaction]
+          };
+    
+          await userDb.updateOne(
+            { email: email },
+            { $push: { financeTracker: newMonthData } }
+          );
+        }
+    
+        // Fetch the updated user data
+        const updatedUser = await userDb.findOne({ email: email });
+    
+        if (!updatedUser) {
+          return res.status(404).json({ message: "User not found" });
+        }
+    
+        // Calculate savings for each month
+        updatedUser.financeTracker = updatedUser.financeTracker.map(month => ({
+          ...month,
+          savings: month.income - month.expenses
+        }));
+    
+        await userDb.updateOne(
+          { email: email },
+          { $set: { financeTracker: updatedUser.financeTracker } }
+        );
+    
+        res.status(201).json({
+          message: "Transaction added successfully",
+          updatedFinancialData: updatedUser.financeTracker
+        });
+      } catch (error) {
+        console.error("Error adding transaction:", error);
+        res.status(500).json({ error: "Error adding transaction" });
+      }
+    });
+
+    // --- Edit a transaction
+    app.put("/api/v1/editTransaction", async (req, res) => {
+      const { email, monthName, transactionId, updatedTransaction } = req.body;
+      console.log("🚀 ~ app.put ~ req.body:", req.body);
+    
+      try {    
+        // Find the user and the specific transaction
+        const user = await userDb.findOne(
+          { 
+            email: email, 
+            "financeTracker.name": monthName,
+            "financeTracker.transactions._id": new ObjectId(transactionId)
+          }
+        );
+    
+        if (!user) {
+          return res.status(404).json({ message: "User, month, or transaction not found" });
+        }
+    
+        // Find the specific month and transaction
+        const monthIndex = user.financeTracker.findIndex(m => m.name === monthName);
+        const transactionIndex = user.financeTracker[monthIndex].transactions.findIndex(
+          t => t._id.toString() === transactionId
+        );
+    
+        const oldTransaction = user.financeTracker[monthIndex].transactions[transactionIndex];
+    
+        // Calculate the differences
+        const incomeDiff = updatedTransaction.type === 'income' 
+          ? updatedTransaction.amount - (oldTransaction.type === 'income' ? oldTransaction.amount : 0)
+          : -(oldTransaction.type === 'income' ? oldTransaction.amount : 0);
+    
+        const expensesDiff = updatedTransaction.type === 'expenses'
+          ? updatedTransaction.amount - (oldTransaction.type === 'expenses' ? oldTransaction.amount : 0)
+          : -(oldTransaction.type === 'expenses' ? oldTransaction.amount : 0);
+    
+        // Update the transaction and month totals
+        const updateResult = await userDb.updateOne(
+          { 
+            email: email, 
+            "financeTracker.name": monthName,
+            "financeTracker.transactions._id": new ObjectId(transactionId)
+          },
+          {
+            $set: {
+              "financeTracker.$.transactions.$[trans].type": updatedTransaction.type,
+              "financeTracker.$.transactions.$[trans].amount": updatedTransaction.amount,
+              "financeTracker.$.transactions.$[trans].date": new Date().toISOString()
+            },
+            $inc: {
+              "financeTracker.$.income": incomeDiff,
+              "financeTracker.$.expenses": expensesDiff,
+            }
+          },
+          {
+            arrayFilters: [{ "trans._id": new ObjectId(transactionId) }]
+          }
+        );
+    
+        if (updateResult.modifiedCount === 0) {
+          return res.status(404).json({ message: "Transaction not found or no changes made" });
+        }
+    
+        // Fetch the updated user data
+        const updatedUser = await userDb.findOne({ email: email });
+    
+        // Recalculate savings for the updated month
+        updatedUser.financeTracker = updatedUser.financeTracker.map(month => ({
+          ...month,
+          savings: month.income - month.expenses
+        }));
+    
+        await userDb.updateOne(
+          { email: email },
+          { $set: { financeTracker: updatedUser.financeTracker } }
+        );
+    
+        res.status(200).json({
+          message: "Transaction updated successfully",
+          updatedFinancialData: updatedUser.financeTracker
+        });
+      } catch (error) {
+        console.error("Error updating transaction:", error);
+        res.status(500).json({ error: "Error updating transaction" });
+      }
+    });
+
+    // --- Delete a transaction
+    app.delete("/api/v1/deleteTransaction", async (req, res) => {
+      const { email, monthName, transactionId } = req.body;
+      console.log("🚀 ~ app.delete ~ req.body:", req.body);
+    
+      try {    
+        // Find the user and the specific transaction
+        const user = await userDb.findOne(
+          { 
+            email: email, 
+            "financeTracker.name": monthName,
+            "financeTracker.transactions._id": new ObjectId(transactionId)
+          }
+        );
+    
+        if (!user) {
+          return res.status(404).json({ message: "User, month, or transaction not found" });
+        }
+    
+        // Find the specific month and transaction
+        const monthIndex = user.financeTracker.findIndex(m => m.name === monthName);
+        const transaction = user.financeTracker[monthIndex].transactions.find(
+          t => t._id.toString() === transactionId
+        );
+    
+        if (!transaction) {
+          return res.status(404).json({ message: "Transaction not found" });
+        }
+    
+        // Calculate the adjustments needed
+        const incomeAdjustment = transaction.type === 'income' ? -transaction.amount : 0;
+        const expensesAdjustment = transaction.type === 'expenses' ? -transaction.amount : 0;
+    
+        // Remove the transaction and update month totals
+        const updateResult = await userDb.updateOne(
+          { email: email, "financeTracker.name": monthName },
+          {
+            $pull: { "financeTracker.$.transactions": { _id: new ObjectId(transactionId) } },
+            $inc: {
+              "financeTracker.$.income": incomeAdjustment,
+              "financeTracker.$.expenses": expensesAdjustment,
+            }
+          }
+        );
+    
+        if (updateResult.modifiedCount === 0) {
+          return res.status(404).json({ message: "Transaction not found or already deleted" });
+        }
+    
+        // Fetch the updated user data
+        const updatedUser = await userDb.findOne({ email: email });
+    
+        // Recalculate savings for all months
+        updatedUser.financeTracker = updatedUser.financeTracker.map(month => ({
+          ...month,
+          savings: month.income - month.expenses
+        }));
+    
+        await userDb.updateOne(
+          { email: email },
+          { $set: { financeTracker: updatedUser.financeTracker } }
+        );
+    
+        res.status(200).json({
+          message: "Transaction deleted successfully",
+          updatedFinancialData: updatedUser.financeTracker
+        });
+      } catch (error) {
+        console.error("Error deleting transaction:", error);
+        res.status(500).json({ error: "Error deleting transaction" });
+      }
+    });
+
   } finally {
     // await client.close();
   }
