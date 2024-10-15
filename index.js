@@ -594,36 +594,38 @@ async function run() {
     ---------------------------------------------------- */
 
 
-    app.post("/api/v1/addHabit", async (req, res) => {
-      const { habit } = req.body;
-      const email = habit.email;
     
-      try {
-        const existingUser = await userDb.findOne({ email });
-        if (!existingUser) {
-          return res.status(404).json({ message: "User not found" });
-        }
-    
-        // Create new habit object
-        const newHabit = {
-          _id: new Date(),
-          name: habit.name,
-          createdAt: new Date(),
-          days: {} // No history yet
-        };
-    
-        // Add new habit to user's habits array
-        const result = await userDb.updateOne(
-          { email },
-          { $push: { habits: newHabit } }
-        );
-    
-        res.status(201).json({ message: "Habit added successfully" });
-      } catch (error) {
-        console.error("Error adding habit:", error);
-        res.status(500).json({ error: "Error adding habit" });
-      }
-    });
+app.post("/api/v1/addHabit", async (req, res) => {
+  const { habit } = req.body;
+  const email = habit.email;
+  console.log("🚀 ~ app.post ~ email:", email)
+
+  try {
+    const existingUser = await userDb.findOne({ email });
+    if (!existingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Create new habit object
+    const newHabit = {
+      _id: new ObjectId(), // Use ObjectId for the _id
+      name: habit.name,
+      createdAt: new Date(),
+      days: {} // No history yet
+    };
+
+    // Add new habit to user's habits array
+    const result = await userDb.updateOne(
+      { email },
+      { $push: { habits: newHabit } }
+    );
+
+    res.status(201).json({ message: "Habit added successfully" });
+  } catch (error) {
+    console.error("Error adding habit:", error);
+    res.status(500).json({ error: "Error adding habit" });
+  }
+});
     
 
     // --- Delete Habit
@@ -639,7 +641,7 @@ async function run() {
         // Remove the habit by habitId
         const result = await userDb.updateOne(
           { email },
-          { $pull: { habits: {_id : new Date(habitId) } } }
+          { $pull: { habits: {_id : new ObjectId(habitId) } } }
         );
     
         res.status(200).json({ message: "Habit deleted successfully" });
@@ -653,6 +655,7 @@ async function run() {
     // --- Toggle Habit Completion for a Date
     app.post("/api/v1/toggleHabit", async (req, res) => {
       const { email, habitId, date } = req.body;
+      console.log("🚀 ~ app.post ~ habitId:", habitId)
     
       try {
         const existingUser = await userDb.findOne({ email });
@@ -664,7 +667,7 @@ async function run() {
         const habitDateId = new Date(habitId); 
     
         // Check if the habit exists
-        const habit = existingUser.habits.find(h => h._id.getTime() === habitDateId.getTime());
+        const habit = existingUser.habits.find(h => h._id == habitId);
         if (!habit) {
           return res.status(404).json({ message: "Habit not found" });
         }
@@ -675,7 +678,7 @@ async function run() {
     
         // Update the specific day's completion status in the habits array
         const result = await userDb.updateOne(
-          { email, "habits._id": habitDateId },
+          { email, "habits._id": new  ObjectId(habitId) },
           { $set: { [`habits.$.days.${date}`]: { completed: updatedStatus } } }
         );
     
